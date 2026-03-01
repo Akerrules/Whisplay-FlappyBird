@@ -9,17 +9,35 @@ import os
 import time
 from PIL import Image
 
-# Add Driver (run from repo root or example/)
+# Add Driver: Whisplay-FlappyBird expects to run alongside PiSugar/Whisplay (Driver at repo root)
+# See: https://github.com/PiSugar/Whisplay
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_DRIVER = os.path.join(_SCRIPT_DIR, "Driver")
-if not os.path.isdir(_DRIVER):
-    _DRIVER = os.path.join(_SCRIPT_DIR, "..", "Driver")
-sys.path.insert(0, os.path.abspath(_DRIVER))
+for _DRIVER in [
+    os.path.join(_SCRIPT_DIR, "Driver"),
+    os.path.join(_SCRIPT_DIR, "..", "Driver"),
+    os.path.join(_SCRIPT_DIR, "..", "..", "Driver"),  # e.g. Whisplay/example/Whisplay-FlappyBird -> Whisplay/Driver
+]:
+    if os.path.isdir(_DRIVER):
+        sys.path.insert(0, os.path.abspath(_DRIVER))
+        break
+else:
+    _DRIVER = None
 
 try:
     from WhisPlay import WhisPlayBoard
 except ImportError:
-    from Whisplay import WhisPlayBoard  # try alternate name
+    try:
+        from Whisplay import WhisPlayBoard
+    except ImportError:
+        if _DRIVER is None:
+            raise SystemExit(
+                "Whisplay driver not found. Clone the PiSugar Whisplay repo and run this example from inside it:\n"
+                "  git clone https://github.com/PiSugar/Whisplay.git\n"
+                "  cd Whisplay/example && git clone https://github.com/Akerrules/Whisplay-FlappyBird.git\n"
+                "  cd Whisplay-FlappyBird && sudo python3 FlappyBird.py\n"
+                "Or install the driver and put Whisplay-FlappyBird in a folder that has a 'Driver' sibling with Whisplay.py/WhisPlay.py."
+            ) from None
+        raise
 
 W, H = 240, 280
 GRAVITY = 0.35
