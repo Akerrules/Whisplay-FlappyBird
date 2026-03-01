@@ -1,27 +1,22 @@
 #!/usr/bin/env python3
 """
 Flappy Bird for PiSugar Whisplay HAT (Raspberry Pi Zero 2 W).
-- Button = flap (jump)
-- Run: cd ~/Whisplay/example && sudo python3 flappy_bird.py
+Button = flap.  Run from inside the Whisplay repo:
+  cd ~/Whisplay/example/Whisplay-FlappyBird && sudo python3 flappy_bird.py
 """
 import sys
 import os
 import time
-from PIL import Image
+import random
+import struct
+from PIL import Image, ImageDraw, ImageFont
 
-# Add Driver: Whisplay-FlappyBird expects to run alongside PiSugar/Whisplay (Driver at repo root)
-# See: https://github.com/PiSugar/Whisplay
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-for _DRIVER in [
-    os.path.join(_SCRIPT_DIR, "Driver"),
-    os.path.join(_SCRIPT_DIR, "..", "Driver"),
-    os.path.join(_SCRIPT_DIR, "..", "..", "Driver"),  # e.g. Whisplay/example/Whisplay-FlappyBird -> Whisplay/Driver
-]:
-    if os.path.isdir(_DRIVER):
-        sys.path.insert(0, os.path.abspath(_DRIVER))
+_DIR = os.path.dirname(os.path.abspath(__file__))
+for _rel in ("Driver", os.path.join("..", "Driver"), os.path.join("..", "..", "Driver")):
+    _p = os.path.join(_DIR, _rel)
+    if os.path.isdir(_p):
+        sys.path.insert(0, os.path.abspath(_p))
         break
-else:
-    _DRIVER = None
 
 try:
     from WhisPlay import WhisPlayBoard
@@ -29,179 +24,237 @@ except ImportError:
     try:
         from Whisplay import WhisPlayBoard
     except ImportError:
-        if _DRIVER is None:
-            raise SystemExit(
-                "Whisplay driver not found. Clone the PiSugar Whisplay repo and run this example from inside it:\n"
-                "  git clone https://github.com/PiSugar/Whisplay.git\n"
-                "  cd Whisplay/example && git clone https://github.com/Akerrules/Whisplay-FlappyBird.git\n"
-                "  cd Whisplay-FlappyBird && sudo python3 FlappyBird.py\n"
-                "Or install the driver and put Whisplay-FlappyBird in a folder that has a 'Driver' sibling with Whisplay.py/WhisPlay.py."
-            ) from None
-        raise
+        raise SystemExit(
+            "Whisplay driver not found.\n"
+            "  git clone https://github.com/PiSugar/Whisplay.git\n"
+            "  cd Whisplay/example && git clone https://github.com/Akerrules/Whisplay-FlappyBird.git\n"
+            "  cd Whisplay-FlappyBird && sudo python3 flappy_bird.py"
+        ) from None
 
-W, H = 240, 280
-GRAVITY = 0.35
-FLAP_STRENGTH = -7.5
-PIPE_WIDTH = 40
-PIPE_GAP = 85
-PIPE_SPEED = 2.8
-PIPE_SPAWN_INTERVAL = 90
-BIRD_SIZE = 18
-BIRD_X = 60
-FLOOR_Y = H - 25
-SKY_COLOR = (135, 206, 235)
-PIPE_COLOR = (34, 139, 34)
-BIRD_COLOR = (255, 220, 0)
-FLOOR_COLOR = (139, 90, 43)
-TEXT_COLOR = (0, 0, 0)
+# ── Fast RGB565 conversion ──────────────────────────────────────────
+# numpy vectorizes the whole 240x280 image in one shot (~2 ms on Pi Zero)
+# vs pure-Python loop (~150-300 ms).  Falls back to struct if unavailable.
+try:
+    import numpy as np
 
-def rgb565(r, g, b):
-    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+    def image_to_rgb565(im):
+        a = np.asarray(im.convert("RGB"), dtype=np.uint16)
+        packed = ((a[:, :, 0] & 0xF8) << 8) | ((a[:, :, 1] & 0xFC) << 3) | (a[:, :, 2] >> 3)
+        return packed.astype(">u2").tobytes()
 
-def image_to_rgb565_bytes(im):
-    w, h = im.size
-    out = []
-    for y in range(h):
-        for x in range(w):
-            p = im.getpixel((x, y))
-            r, g, b = (p[:3] if len(p) >= 3 else p)
-            v = rgb565(r, g, b)
-            out.extend([(v >> 8) & 0xFF, v & 0xFF])
-    return out
+except ImportError:
+    print("numpy not found — install it for much better FPS:  sudo apt install python3-numpy")
 
-flap_requested = False
-def on_flap():
-    global flap_requested
-    flap_requested = True
+    def image_to_rgb565(im):
+        raw = im.convert("RGB").tobytes()
+        n = len(raw) // 3
+        vals = [
+            ((raw[i] & 0xF8) << 8) | ((raw[i + 1] & 0xFC) << 3) | (raw[i + 2] >> 3)
+            for i in range(0, len(raw), 3)
+        ]
+        return struct.pack(f">{n}H", *vals)
 
+# ── Game constants ──────────────────────────────────────────────────
+GRAVITY    = 0.45
+FLAP_VEL   = -6.5
+PIPE_W     = 36
+PIPE_GAP   = 78
+PIPE_SPEED = 3
+SPAWN_EVERY = 55
+BIRD_W     = 16
+BIRD_H     = 14
+BIRD_X     = 55
+FLOOR_H    = 20
+
+SKY       = (135, 206, 235)
+PIPE_BODY = (34, 139, 34)
+PIPE_CAP  = (22, 110, 22)
+BIRD_FILL = (255, 220, 0)
+BIRD_WING = (230, 180, 0)
+FLOOR_CLR = (120, 75, 35)
+FLOOR_TOP = (139, 90, 43)
+WHITE     = (255, 255, 255)
+BLACK     = (0, 0, 0)
+
+# ── Button state (set from interrupt / poll thread) ─────────────────
+_flap = False
+
+def _on_btn():
+    global _flap
+    _flap = True
+
+# ── Drawing helpers ─────────────────────────────────────────────────
+def _draw_bird(draw, by):
+    draw.rectangle([BIRD_X, by, BIRD_X + BIRD_W - 1, by + BIRD_H - 1], fill=BIRD_FILL)
+    draw.rectangle(
+        [BIRD_X + 2, by + BIRD_H // 2, BIRD_X + BIRD_W // 2, by + BIRD_H - 3],
+        fill=BIRD_WING,
+    )
+    ex, ey = BIRD_X + BIRD_W - 5, by + 3
+    draw.rectangle([ex, ey, ex + 3, ey + 3], fill=WHITE)
+    draw.rectangle([ex + 1, ey + 1, ex + 2, ey + 2], fill=BLACK)
+
+
+def _draw_pipes(draw, pipes, floor_y):
+    for p in pipes:
+        pxi = int(p[0])
+        gt = p[1] - PIPE_GAP // 2
+        gb = p[1] + PIPE_GAP // 2
+        draw.rectangle([pxi, 0, pxi + PIPE_W - 1, gt - 1], fill=PIPE_BODY)
+        draw.rectangle([pxi - 3, gt - 8, pxi + PIPE_W + 2, gt - 1], fill=PIPE_CAP)
+        draw.rectangle([pxi, gb, pxi + PIPE_W - 1, floor_y - 1], fill=PIPE_BODY)
+        draw.rectangle([pxi - 3, gb, pxi + PIPE_W + 2, gb + 7], fill=PIPE_CAP)
+
+
+# ── Main ────────────────────────────────────────────────────────────
 def main():
-    global flap_requested
-    import random
+    global _flap
+
     board = WhisPlayBoard()
     board.set_backlight(80)
-    board.on_button_press(on_flap)
-    lcd_w = getattr(board, "LCD_WIDTH", W)
-    lcd_h = getattr(board, "LCD_HEIGHT", H)
-    bird_y = lcd_h // 2 - BIRD_SIZE // 2
-    bird_vy = 0
-    pipes = []
+    board.on_button_press(_on_btn)
+
+    W = getattr(board, "LCD_WIDTH", 240)
+    H = getattr(board, "LCD_HEIGHT", 280)
+    floor_y = H - FLOOR_H
+    font = ImageFont.load_default()
+
+    # Pre-render floor strip (pasted each frame — avoids re-drawing lines)
+    floor_img = Image.new("RGB", (W, FLOOR_H), FLOOR_CLR)
+    fd = ImageDraw.Draw(floor_img)
+    fd.line([(0, 0), (W, 0)], fill=FLOOR_TOP, width=2)
+    for x in range(0, W, 8):
+        fd.line([(x, 3), (x + 4, FLOOR_H)], fill=FLOOR_TOP, width=1)
+
+    def send(im):
+        board.draw_image(0, 0, W, H, image_to_rgb565(im))
+
+    def new_frame():
+        im = Image.new("RGB", (W, H), SKY)
+        draw = ImageDraw.Draw(im)
+        return im, draw
+
+    # Game state
+    bird_y = float(H // 2)
+    bird_vy = 0.0
+    pipes = []          # each entry: [x_float, gap_center_int, scored_bool]
     score = 0
     frame = 0
-    game_over = False
-    started = False
+    state = "title"     # title | play | dead
+    TARGET_DT = 1.0 / 30
 
     try:
         while True:
-            if game_over:
-                im = Image.new("RGB", (lcd_w, lcd_h), SKY_COLOR)
-                for x in range(0, lcd_w, 4):
-                    im.line([(x, FLOOR_Y), (x + 2, lcd_h)], fill=FLOOR_COLOR)
-                try:
-                    from PIL import ImageDraw, ImageFont
-                    d = ImageDraw.Draw(im)
-                    f = ImageFont.load_default()
-                    d.text((lcd_w // 2 - 45, lcd_h // 2 - 30), "Game Over", fill=TEXT_COLOR, font=f)
-                    d.text((lcd_w // 2 - 25, lcd_h // 2), f"Score: {score}", fill=TEXT_COLOR, font=f)
-                    d.text((lcd_w // 2 - 70, lcd_h // 2 + 25), "Button to restart", fill=TEXT_COLOR, font=f)
-                except Exception:
-                    pass
-                board.draw_image(0, 0, lcd_w, lcd_h, image_to_rgb565_bytes(im))
-                if flap_requested:
-                    flap_requested = False
-                    game_over = False
-                    bird_y = lcd_h // 2 - BIRD_SIZE // 2
-                    bird_vy = 0
-                    pipes, score, frame, started = [], 0, 0, False
-                time.sleep(0.05)
+            t0 = time.time()
+
+            # ── TITLE ───────────────────────────────────
+            if state == "title":
+                im, draw = new_frame()
+                im.paste(floor_img, (0, floor_y))
+                _draw_bird(draw, H // 2 - BIRD_H // 2)
+                draw.text((W // 2 - 30, H // 2 - 25), "Flappy", fill=BLACK, font=font)
+                draw.text((W // 2 - 48, H // 2 + 10), "Press button!", fill=BLACK, font=font)
+                send(im)
+                if _flap:
+                    _flap = False
+                    bird_y = float(H // 2)
+                    bird_vy = FLAP_VEL
+                    pipes = []
+                    score = 0
+                    frame = 0
+                    state = "play"
+                else:
+                    time.sleep(0.04)
                 continue
 
-            if not started:
-                im = Image.new("RGB", (lcd_w, lcd_h), SKY_COLOR)
-                for x in range(0, lcd_w, 4):
-                    im.line([(x, FLOOR_Y), (x + 2, lcd_h)], fill=FLOOR_COLOR)
-                by = int(bird_y)
-                for dy in range(BIRD_SIZE):
-                    for dx in range(BIRD_SIZE):
-                        if 0 <= BIRD_X + dx < lcd_w and 0 <= by + dy < lcd_h:
-                            im.putpixel((BIRD_X + dx, by + dy), BIRD_COLOR)
-                try:
-                    from PIL import ImageDraw, ImageFont
-                    d = ImageDraw.Draw(im)
-                    f = ImageFont.load_default()
-                    d.text((lcd_w // 2 - 35, lcd_h // 2 - 20), "Flappy", fill=TEXT_COLOR, font=f)
-                    d.text((lcd_w // 2 - 45, lcd_h // 2 + 5), "Button = flap", fill=TEXT_COLOR, font=f)
-                except Exception:
-                    pass
-                board.draw_image(0, 0, lcd_w, lcd_h, image_to_rgb565_bytes(im))
-                if flap_requested:
-                    flap_requested = False
-                    started = True
-                    bird_vy = FLAP_STRENGTH
-                time.sleep(0.05)
+            # ── DEAD ────────────────────────────────────
+            if state == "dead":
+                im, draw = new_frame()
+                _draw_pipes(draw, pipes, floor_y)
+                im.paste(floor_img, (0, floor_y))
+                _draw_bird(draw, int(bird_y))
+                bx = W // 2 - 55
+                by = H // 2 - 35
+                draw.rectangle([bx, by, bx + 110, by + 75], fill=WHITE, outline=BLACK, width=2)
+                draw.text((W // 2 - 38, by + 8), "Game Over", fill=BLACK, font=font)
+                draw.text((W // 2 - 28, by + 28), f"Score: {score}", fill=BLACK, font=font)
+                draw.text((W // 2 - 45, by + 50), "Press button", fill=BLACK, font=font)
+                send(im)
+                if _flap:
+                    _flap = False
+                    state = "title"
+                else:
+                    time.sleep(0.05)
                 continue
 
-            if flap_requested:
-                flap_requested = False
-                bird_vy = FLAP_STRENGTH
+            # ── PLAY ────────────────────────────────────
+            if _flap:
+                _flap = False
+                bird_vy = FLAP_VEL
+
+            # Physics
             bird_vy += GRAVITY
             bird_y += bird_vy
-            bird_y = max(0, min(bird_y, FLOOR_Y - BIRD_SIZE))
-            if bird_y + BIRD_SIZE >= FLOOR_Y:
-                game_over = True
+            if bird_y < 0:
+                bird_y = 0.0
+                bird_vy = 0.0
+            if bird_y + BIRD_H >= floor_y:
+                bird_y = float(floor_y - BIRD_H)
+                state = "dead"
                 continue
 
+            # Spawn pipes
             frame += 1
-            if frame % PIPE_SPAWN_INTERVAL == 0 and frame > 0:
-                gap_center = random.randint(PIPE_GAP // 2 + 20, lcd_h - PIPE_GAP // 2 - 20)
-                pipes.append((lcd_w, gap_center))
+            if frame % SPAWN_EVERY == 0:
+                gc = random.randint(PIPE_GAP // 2 + 25, floor_y - PIPE_GAP // 2 - 25)
+                pipes.append([float(W), gc, False])
 
-            new_pipes = []
-            for x, gap_center in pipes:
-                nx = x - PIPE_SPEED
-                if nx + PIPE_WIDTH > 0:
-                    new_pipes.append((nx, gap_center))
-                else:
+            # Move pipes and remove off-screen ones
+            alive = []
+            for p in pipes:
+                p[0] -= PIPE_SPEED
+                if p[0] + PIPE_W > 0:
+                    alive.append(p)
+            pipes = alive
+
+            # Score when pipe right edge passes bird center
+            bird_cx = BIRD_X + BIRD_W // 2
+            for p in pipes:
+                if not p[2] and int(p[0]) + PIPE_W < bird_cx:
+                    p[2] = True
                     score += 1
-            pipes = new_pipes
 
-            bird_top, bird_bottom = int(bird_y), int(bird_y) + BIRD_SIZE
-            for px, gap_center in pipes:
-                pl, pr = px, px + PIPE_WIDTH
-                gap_top = gap_center - PIPE_GAP // 2
-                gap_bottom = gap_center + PIPE_GAP // 2
-                if BIRD_X + BIRD_SIZE < pl or BIRD_X > pr:
-                    continue
-                if bird_top > gap_bottom or bird_bottom < gap_top:
-                    game_over = True
-                    break
-            if game_over:
+            # Collision
+            byi = int(bird_y)
+            for p in pipes:
+                pxi = int(p[0])
+                gt = p[1] - PIPE_GAP // 2
+                gb = p[1] + PIPE_GAP // 2
+                if BIRD_X + BIRD_W > pxi and BIRD_X < pxi + PIPE_W:
+                    if byi < gt or byi + BIRD_H > gb:
+                        state = "dead"
+                        break
+            if state == "dead":
                 continue
 
-            im = Image.new("RGB", (lcd_w, lcd_h), SKY_COLOR)
-            for x in range(0, lcd_w, 4):
-                im.line([(x, FLOOR_Y), (x + 2, lcd_h)], fill=FLOOR_COLOR)
-            for px, gap_center in pipes:
-                gap_top = gap_center - PIPE_GAP // 2
-                gap_bottom = gap_center + PIPE_GAP // 2
-                for py in range(0, gap_top):
-                    for dx in range(PIPE_WIDTH):
-                        if 0 <= px + dx < lcd_w and 0 <= py < lcd_h:
-                            im.putpixel((px + dx, py), PIPE_COLOR)
-                for py in range(gap_bottom, lcd_h):
-                    for dx in range(PIPE_WIDTH):
-                        if 0 <= px + dx < lcd_w and 0 <= py < lcd_h:
-                            im.putpixel((px + dx, py), PIPE_COLOR)
-            by = int(bird_y)
-            for dy in range(BIRD_SIZE):
-                for dx in range(BIRD_SIZE):
-                    if 0 <= BIRD_X + dx < lcd_w and 0 <= by + dy < lcd_h:
-                        im.putpixel((BIRD_X + dx, by + dy), BIRD_COLOR)
-            board.draw_image(0, 0, lcd_w, lcd_h, image_to_rgb565_bytes(im))
-            time.sleep(1 / 35)
+            # Render
+            im, draw = new_frame()
+            _draw_pipes(draw, pipes, floor_y)
+            im.paste(floor_img, (0, floor_y))
+            _draw_bird(draw, byi)
+            draw.text((W // 2 - 5, 8), str(score), fill=WHITE, font=font)
+            send(im)
+
+            elapsed = time.time() - t0
+            remain = TARGET_DT - elapsed
+            if remain > 0:
+                time.sleep(remain)
+
     except KeyboardInterrupt:
         pass
     finally:
         board.cleanup()
+
 
 if __name__ == "__main__":
     main()
