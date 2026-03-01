@@ -11,7 +11,33 @@ import random
 import struct
 from PIL import Image, ImageDraw, ImageFont
 
+# ── Audio (optional — game works fine without pygame) ────────────────
 _DIR = os.path.dirname(os.path.abspath(__file__))
+_SND_DIR = os.path.join(_DIR, "sounds")
+
+try:
+    import pygame
+    pygame.mixer.init(frequency=22050, size=-16, channels=1, buffer=512)
+
+    def _load(name):
+        path = os.path.join(_SND_DIR, name)
+        if os.path.isfile(path):
+            return pygame.mixer.Sound(path)
+        return None
+
+    SND_WING   = _load("05. Wing.mp3")
+    SND_POINT  = _load("03. Point.mp3")
+    SND_HIT    = _load("02. Hit.mp3")
+    SND_DIE    = _load("01. Die.mp3")
+    SND_SWOOSH = _load("04. Swooshing.mp3")
+    _HAS_AUDIO = True
+except Exception:
+    _HAS_AUDIO = False
+
+def _play(snd):
+    if _HAS_AUDIO and snd is not None:
+        snd.play()
+
 for _rel in ("Driver", os.path.join("..", "Driver"), os.path.join("..", "..", "Driver")):
     _p = os.path.join(_DIR, _rel)
     if os.path.isdir(_p):
@@ -157,6 +183,7 @@ def main():
                 send(im)
                 if _flap:
                     _flap = False
+                    _play(SND_SWOOSH)
                     bird_y = float(H // 2)
                     bird_vy = FLAP_VEL
                     pipes = []
@@ -191,6 +218,7 @@ def main():
             if _flap:
                 _flap = False
                 bird_vy = FLAP_VEL
+                _play(SND_WING)
 
             # Physics
             bird_vy += GRAVITY
@@ -200,6 +228,8 @@ def main():
                 bird_vy = 0.0
             if bird_y + BIRD_H >= floor_y:
                 bird_y = float(floor_y - BIRD_H)
+                _play(SND_HIT)
+                _play(SND_DIE)
                 state = "dead"
                 continue
 
@@ -223,6 +253,7 @@ def main():
                 if not p[2] and int(p[0]) + PIPE_W < bird_cx:
                     p[2] = True
                     score += 1
+                    _play(SND_POINT)
 
             # Collision
             byi = int(bird_y)
@@ -232,6 +263,8 @@ def main():
                 gb = p[1] + PIPE_GAP // 2
                 if BIRD_X + BIRD_W > pxi and BIRD_X < pxi + PIPE_W:
                     if byi < gt or byi + BIRD_H > gb:
+                        _play(SND_HIT)
+                        _play(SND_DIE)
                         state = "dead"
                         break
             if state == "dead":
@@ -253,6 +286,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        if _HAS_AUDIO:
+            pygame.mixer.quit()
         board.cleanup()
 
 

@@ -7,7 +7,7 @@ Built with Python and Pillow, optimized for the Raspberry Pi Zero 2 W.
 ## Hardware
 
 - Raspberry Pi Zero 2 W (or any Pi with a 40-pin header)
-- [PiSugar Whisplay HAT](https://docs.pisugar.com/docs/product-wiki/whisplay/intro)
+- [PiSugar Whisplay HAT](https://docs.pisuga r.com/docs/product-wiki/whisplay/intro)
 
 ## Setup
 
