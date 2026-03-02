@@ -117,6 +117,15 @@ def main():
     board = WhisPlayBoard(backlight=80)
 
     def _shutdown():
+        try:
+            if _HAS_AUDIO:
+                pygame.mixer.quit()
+        except Exception:
+            pass
+        try:
+            board.cleanup()
+        except Exception:
+            pass
         sys.exit(0)
 
     TriplePressExit(board, on_press=_on_btn, shutdown_fn=_shutdown)
@@ -210,6 +219,7 @@ def main():
                 bird_y = float(floor_y - BIRD_H)
                 _play(SND_HIT)
                 _play(SND_DIE)
+                _flap = False
                 state = "dead"
                 continue
 
@@ -245,6 +255,7 @@ def main():
                     if byi < gt or byi + BIRD_H > gb:
                         _play(SND_HIT)
                         _play(SND_DIE)
+                        _flap = False
                         state = "dead"
                         break
             if state == "dead":
