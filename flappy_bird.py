@@ -172,7 +172,7 @@ def main():
             pass
         sys.exit(0)
 
-    TriplePressExit(board, on_press=_on_btn, shutdown_fn=_shutdown)
+    triple = TriplePressExit(board, on_press=_on_btn, shutdown_fn=_shutdown)
 
     from whisplay_hw import LCD_W as W, LCD_H as H
     floor_y = H - FLOOR_H
@@ -248,6 +248,7 @@ def main():
                     score = 0
                     frame = 0
                     state = "play"
+                    triple.active = False
                 else:
                     time.sleep(0.04)
                 continue
@@ -297,6 +298,7 @@ def main():
                 _play(SND_DIE)
                 _flap = False
                 state = "dead"
+                triple.active = True
                 continue
 
             # Spawn pipes
@@ -333,6 +335,7 @@ def main():
                         _play(SND_DIE)
                         _flap = False
                         state = "dead"
+                        triple.active = True
                         break
             if state == "dead":
                 continue

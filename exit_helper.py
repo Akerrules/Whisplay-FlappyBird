@@ -36,6 +36,7 @@ class TriplePressExit:
         self._shutdown_fn = shutdown_fn
         self._window = window
         self._press_times: list[float] = []
+        self.active = True
 
         board.on_button_press(self._handle_press)
         if on_release:
@@ -43,15 +44,18 @@ class TriplePressExit:
 
     def _handle_press(self):
         now = time.time()
-        self._press_times.append(now)
-        # keep only presses inside the detection window
-        self._press_times = [
-            t for t in self._press_times if now - t <= self._window
-        ]
-        if len(self._press_times) >= REQUIRED_PRESSES:
+
+        if self.active:
+            self._press_times.append(now)
+            self._press_times = [
+                t for t in self._press_times if now - t <= self._window
+            ]
+            if len(self._press_times) >= REQUIRED_PRESSES:
+                self._press_times.clear()
+                self._exit_to_launcher()
+                return
+        else:
             self._press_times.clear()
-            self._exit_to_launcher()
-            return
 
         if self._user_on_press:
             self._user_on_press()
