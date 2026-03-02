@@ -38,25 +38,7 @@ def _play(snd):
     if _HAS_AUDIO and snd is not None:
         snd.play()
 
-# Locate whisplay_hw driver — bundled with the launcher
-for _candidate in (
-    os.path.join(_DIR, "whisplay_hw.py"),
-    os.path.join(_DIR, "..", "Whisplay-Launcher", "settings", "whisplay_hw.py"),
-    os.path.join(_DIR, "..", "..", "Whisplay-Launcher", "settings", "whisplay_hw.py"),
-):
-    _c = os.path.normpath(_candidate)
-    if os.path.isfile(_c):
-        sys.path.insert(0, os.path.dirname(_c))
-        break
-
-try:
-    from whisplay_hw import WhisPlayBoard
-except ImportError:
-    raise SystemExit(
-        "whisplay_hw driver not found.\n"
-        "  Place whisplay_hw.py next to this script, or ensure\n"
-        "  Whisplay-Launcher/settings/whisplay_hw.py is a sibling directory."
-    ) from None
+from whisplay_hw import WhisPlayBoard
 
 # ── Game constants ──────────────────────────────────────────────────
 GRAVITY    = 0.45
@@ -70,13 +52,19 @@ BIRD_H     = 14
 BIRD_X     = 55
 FLOOR_H    = 20
 
-SKY       = (135, 206, 235)
-PIPE_BODY = (34, 139, 34)
-PIPE_CAP  = (22, 110, 22)
-BIRD_FILL = (255, 220, 0)
-BIRD_WING = (230, 180, 0)
-FLOOR_CLR = (120, 75, 35)
-FLOOR_TOP = (139, 90, 43)
+SKY       = (112, 197, 206)
+PIPE_BODY = (115, 190, 45)
+PIPE_CAP  = (115, 190, 45)
+PIPE_HL   = (153, 229, 80)
+PIPE_SH   = (89, 150, 31)
+BIRD_FILL = (246, 220, 2)
+BIRD_WING = (246, 160, 0)
+BIRD_OUTLINE = (84, 56, 71)
+BIRD_BEAK = (250, 100, 0)
+FLOOR_CLR = (222, 216, 149)
+FLOOR_TOP = (115, 190, 45)
+FLOOR_STRIPE = (200, 190, 110)
+FLOOR_OUTLINE = (84, 56, 71)
 WHITE     = (255, 255, 255)
 BLACK     = (0, 0, 0)
 
@@ -89,14 +77,22 @@ def _on_btn():
 
 # ── Drawing helpers ─────────────────────────────────────────────────
 def _draw_bird(draw, by):
+    # Body outline
+    draw.rectangle([BIRD_X-1, by-1, BIRD_X + BIRD_W, by + BIRD_H], fill=BIRD_OUTLINE)
+    # Body fill
     draw.rectangle([BIRD_X, by, BIRD_X + BIRD_W - 1, by + BIRD_H - 1], fill=BIRD_FILL)
-    draw.rectangle(
-        [BIRD_X + 2, by + BIRD_H // 2, BIRD_X + BIRD_W // 2, by + BIRD_H - 3],
-        fill=BIRD_WING,
-    )
-    ex, ey = BIRD_X + BIRD_W - 5, by + 3
+    # Beak
+    draw.rectangle([BIRD_X + BIRD_W - 2, by + BIRD_H // 2 + 1, BIRD_X + BIRD_W + 4, by + BIRD_H - 2], fill=BIRD_OUTLINE)
+    draw.rectangle([BIRD_X + BIRD_W - 1, by + BIRD_H // 2 + 2, BIRD_X + BIRD_W + 3, by + BIRD_H - 3], fill=BIRD_BEAK)
+    # Wing outline
+    draw.rectangle([BIRD_X + 1, by + BIRD_H // 2 - 1, BIRD_X + BIRD_W // 2 + 1, by + BIRD_H - 2], fill=BIRD_OUTLINE)
+    # Wing fill
+    draw.rectangle([BIRD_X + 2, by + BIRD_H // 2, BIRD_X + BIRD_W // 2, by + BIRD_H - 3], fill=BIRD_WING)
+    # Eye
+    ex, ey = BIRD_X + BIRD_W - 6, by + 2
+    draw.rectangle([ex-1, ey-1, ex + 4, ey + 4], fill=BIRD_OUTLINE)
     draw.rectangle([ex, ey, ex + 3, ey + 3], fill=WHITE)
-    draw.rectangle([ex + 1, ey + 1, ex + 2, ey + 2], fill=BLACK)
+    draw.rectangle([ex + 2, ey + 1, ex + 3, ey + 2], fill=BLACK)
 
 
 def _draw_pipes(draw, pipes, floor_y):
@@ -104,10 +100,58 @@ def _draw_pipes(draw, pipes, floor_y):
         pxi = int(p[0])
         gt = p[1] - PIPE_GAP // 2
         gb = p[1] + PIPE_GAP // 2
+        
+        # Top pipe
+        draw.rectangle([pxi-1, 0, pxi + PIPE_W, gt - 1], fill=BIRD_OUTLINE)
         draw.rectangle([pxi, 0, pxi + PIPE_W - 1, gt - 1], fill=PIPE_BODY)
+        draw.rectangle([pxi + 2, 0, pxi + 6, gt - 1], fill=PIPE_HL)
+        draw.rectangle([pxi + PIPE_W - 6, 0, pxi + PIPE_W - 2, gt - 1], fill=PIPE_SH)
+        
+        draw.rectangle([pxi - 4, gt - 9, pxi + PIPE_W + 3, gt], fill=BIRD_OUTLINE)
         draw.rectangle([pxi - 3, gt - 8, pxi + PIPE_W + 2, gt - 1], fill=PIPE_CAP)
+        draw.rectangle([pxi - 1, gt - 8, pxi + 3, gt - 1], fill=PIPE_HL)
+        draw.rectangle([pxi + PIPE_W - 3, gt - 8, pxi + PIPE_W + 1, gt - 1], fill=PIPE_SH)
+
+        # Bottom pipe
+        draw.rectangle([pxi-1, gb, pxi + PIPE_W, floor_y - 1], fill=BIRD_OUTLINE)
         draw.rectangle([pxi, gb, pxi + PIPE_W - 1, floor_y - 1], fill=PIPE_BODY)
+        draw.rectangle([pxi + 2, gb, pxi + 6, floor_y - 1], fill=PIPE_HL)
+        draw.rectangle([pxi + PIPE_W - 6, gb, pxi + PIPE_W - 2, floor_y - 1], fill=PIPE_SH)
+        
+        draw.rectangle([pxi - 4, gb, pxi + PIPE_W + 3, gb + 8], fill=BIRD_OUTLINE)
         draw.rectangle([pxi - 3, gb, pxi + PIPE_W + 2, gb + 7], fill=PIPE_CAP)
+        draw.rectangle([pxi - 1, gb, pxi + 3, gb + 7], fill=PIPE_HL)
+        draw.rectangle([pxi + PIPE_W - 3, gb, pxi + PIPE_W + 1, gb + 7], fill=PIPE_SH)
+
+
+def _draw_scaled_text(im, center_x, y, text, font, fill, outline, scale=2):
+    # Render text at 1x to a transparent temporary image
+    # 200x50 is large enough for short game strings with default font
+    temp = Image.new("RGBA", (200, 50), (0, 0, 0, 0))
+    td = ImageDraw.Draw(temp)
+    
+    # Draw outline (1px border)
+    td.text((1, 1), text, font=font, fill=outline)
+    td.text((3, 1), text, font=font, fill=outline)
+    td.text((1, 3), text, font=font, fill=outline)
+    td.text((3, 3), text, font=font, fill=outline)
+    td.text((2, 1), text, font=font, fill=outline)
+    td.text((2, 3), text, font=font, fill=outline)
+    td.text((1, 2), text, font=font, fill=outline)
+    td.text((3, 2), text, font=font, fill=outline)
+    
+    # Draw fill
+    td.text((2, 2), text, font=font, fill=fill)
+    
+    bbox = temp.getbbox()
+    if bbox:
+        temp = temp.crop(bbox)
+        nw = temp.width * scale
+        nh = temp.height * scale
+        temp = temp.resize((nw, nh), Image.NEAREST)
+        
+        px = center_x - nw // 2
+        im.paste(temp, (px, int(y)), temp)
 
 
 # ── Main ────────────────────────────────────────────────────────────
@@ -135,17 +179,40 @@ def main():
     font = ImageFont.load_default()
 
     # Pre-render floor strip (pasted each frame — avoids re-drawing lines)
-    floor_img = Image.new("RGB", (W, FLOOR_H), FLOOR_CLR)
+    floor_img = Image.new("RGB", (W + 12, FLOOR_H), FLOOR_CLR)
     fd = ImageDraw.Draw(floor_img)
-    fd.line([(0, 0), (W, 0)], fill=FLOOR_TOP, width=2)
-    for x in range(0, W, 8):
-        fd.line([(x, 3), (x + 4, FLOOR_H)], fill=FLOOR_TOP, width=1)
+    for x in range(-FLOOR_H, W + 12, 12):
+        fd.polygon([(x, FLOOR_H), (x + 6, FLOOR_H), (x + 6 + FLOOR_H, 0), (x + FLOOR_H, 0)], fill=FLOOR_STRIPE)
+    fd.rectangle([0, 0, W + 12, 4], fill=FLOOR_TOP)
+    fd.line([(0, 0), (W + 12, 0)], fill=FLOOR_OUTLINE, width=1)
+    fd.line([(0, 4), (W + 12, 4)], fill=FLOOR_OUTLINE, width=1)
+
+    # Pre-render sky background
+    bg_img = Image.new("RGB", (W, H), SKY)
+    bd = ImageDraw.Draw(bg_img)
+    # Draw some simple clouds
+    bd.ellipse([30, 40, 70, 70], fill=WHITE)
+    bd.ellipse([50, 30, 90, 60], fill=WHITE)
+    bd.ellipse([70, 40, 110, 70], fill=WHITE)
+    bd.rectangle([50, 50, 90, 70], fill=WHITE)
+
+    bd.ellipse([150, 80, 180, 100], fill=WHITE)
+    bd.ellipse([165, 70, 195, 90], fill=WHITE)
+    bd.ellipse([180, 80, 210, 100], fill=WHITE)
+    bd.rectangle([165, 85, 195, 100], fill=WHITE)
+
+    # City silhouette
+    bd.rectangle([20, floor_y - 30, 40, floor_y], fill=(160, 200, 210))
+    bd.rectangle([35, floor_y - 50, 60, floor_y], fill=(140, 180, 190))
+    bd.rectangle([80, floor_y - 40, 110, floor_y], fill=(150, 190, 200))
+    bd.rectangle([160, floor_y - 45, 190, floor_y], fill=(140, 180, 190))
+    bd.rectangle([180, floor_y - 25, 220, floor_y], fill=(160, 200, 210))
 
     def send(im):
         board.display_image(im)
 
     def new_frame():
-        im = Image.new("RGB", (W, H), SKY)
+        im = bg_img.copy()
         draw = ImageDraw.Draw(im)
         return im, draw
 
@@ -157,6 +224,7 @@ def main():
     frame = 0
     state = "title"     # title | play | dead
     TARGET_DT = 1.0 / 30
+    floor_offset = 0
 
     try:
         while True:
@@ -164,11 +232,12 @@ def main():
 
             # ── TITLE ───────────────────────────────────
             if state == "title":
+                floor_offset = (floor_offset - int(PIPE_SPEED)) % 12
                 im, draw = new_frame()
-                im.paste(floor_img, (0, floor_y))
+                im.paste(floor_img, (floor_offset - 12, floor_y))
                 _draw_bird(draw, H // 2 - BIRD_H // 2)
-                draw.text((W // 2 - 30, H // 2 - 25), "Flappy", fill=BLACK, font=font)
-                draw.text((W // 2 - 48, H // 2 + 10), "Press button!", fill=BLACK, font=font)
+                _draw_scaled_text(im, W // 2, H // 2 - 50, "Flappy", font, WHITE, BIRD_OUTLINE, scale=3)
+                _draw_scaled_text(im, W // 2, H // 2 + 10, "Press button!", font, WHITE, BIRD_OUTLINE, scale=2)
                 send(im)
                 if _flap:
                     _flap = False
@@ -187,14 +256,21 @@ def main():
             if state == "dead":
                 im, draw = new_frame()
                 _draw_pipes(draw, pipes, floor_y)
-                im.paste(floor_img, (0, floor_y))
+                im.paste(floor_img, (floor_offset - 12, floor_y))
                 _draw_bird(draw, int(bird_y))
-                bx = W // 2 - 55
-                by = H // 2 - 35
-                draw.rectangle([bx, by, bx + 110, by + 75], fill=WHITE, outline=BLACK, width=2)
-                draw.text((W // 2 - 38, by + 8), "Game Over", fill=BLACK, font=font)
-                draw.text((W // 2 - 28, by + 28), f"Score: {score}", fill=BLACK, font=font)
-                draw.text((W // 2 - 45, by + 50), "Press button", fill=BLACK, font=font)
+                
+                # Make box wider and taller to fit bigger text
+                bx = W // 2 - 80
+                by = H // 2 - 45
+                
+                # Drop shadow
+                draw.rectangle([bx + 3, by + 3, bx + 160 + 3, by + 90 + 3], fill=BIRD_OUTLINE)
+                # Box
+                draw.rectangle([bx, by, bx + 160, by + 90], fill=FLOOR_CLR, outline=BIRD_OUTLINE, width=2)
+                
+                _draw_scaled_text(im, W // 2, by + 8, "Game Over", font, WHITE, BIRD_OUTLINE, scale=2)
+                _draw_scaled_text(im, W // 2, by + 40, f"Score: {score}", font, WHITE, BIRD_OUTLINE, scale=2)
+                _draw_scaled_text(im, W // 2, by + 70, "Press button", font, WHITE, BIRD_OUTLINE, scale=1)
                 send(im)
                 if _flap:
                     _flap = False
@@ -262,11 +338,12 @@ def main():
                 continue
 
             # Render
+            floor_offset = (floor_offset - int(PIPE_SPEED)) % 12
             im, draw = new_frame()
             _draw_pipes(draw, pipes, floor_y)
-            im.paste(floor_img, (0, floor_y))
+            im.paste(floor_img, (floor_offset - 12, floor_y))
             _draw_bird(draw, byi)
-            draw.text((W // 2 - 5, 8), str(score), fill=WHITE, font=font)
+            _draw_scaled_text(im, W // 2, 10, str(score), font, WHITE, BIRD_OUTLINE, scale=3)
             send(im)
 
             elapsed = time.time() - t0
