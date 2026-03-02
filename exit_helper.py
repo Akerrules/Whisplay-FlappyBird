@@ -38,7 +38,8 @@ class TriplePressExit:
         self._press_times: list[float] = []
 
         board.on_button_press(self._handle_press)
-        board.on_button_release(self._handle_release)
+        if on_release:
+            board.on_button_release(self._handle_release)
 
     def _handle_press(self):
         now = time.time()
