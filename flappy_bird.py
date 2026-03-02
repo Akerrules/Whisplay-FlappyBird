@@ -10,6 +10,7 @@ import time
 import random
 import struct
 from PIL import Image, ImageDraw, ImageFont
+from exit_helper import TriplePressExit
 
 # ── Audio (optional — game works fine without pygame) ────────────────
 _DIR = os.path.dirname(os.path.abspath(__file__))
@@ -138,7 +139,14 @@ def main():
 
     board = WhisPlayBoard()
     board.set_backlight(80)
-    board.on_button_press(_on_btn)
+
+    def _shutdown():
+        if _HAS_AUDIO:
+            pygame.mixer.quit()
+        board.cleanup()
+        sys.exit(0)
+
+    TriplePressExit(board, on_press=_on_btn, shutdown_fn=_shutdown)
 
     W = getattr(board, "LCD_WIDTH", 240)
     H = getattr(board, "LCD_HEIGHT", 280)
