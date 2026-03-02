@@ -9,7 +9,7 @@ import os
 import time
 import random
 from PIL import Image, ImageDraw, ImageFont
-from exit_helper import TriplePressExit
+from exit_helper import LongPressExit
 
 # ── Audio (optional — game works fine without pygame) ────────────────
 _DIR = os.path.dirname(os.path.abspath(__file__))
@@ -172,7 +172,7 @@ def main():
             pass
         sys.exit(0)
 
-    triple = TriplePressExit(board, on_press=_on_btn, shutdown_fn=_shutdown)
+    exit_handler = LongPressExit(board, on_press=_on_btn, shutdown_fn=_shutdown)
 
     from whisplay_hw import LCD_W as W, LCD_H as H
     floor_y = H - FLOOR_H
@@ -222,13 +222,56 @@ def main():
     pipes = []          # each entry: [x_float, gap_center_int, scored_bool]
     score = 0
     frame = 0
-    state = "title"     # title | play | dead
+    state = "title"     # title | play | dead | confirm_exit
+    prev_state = None
+    confirm_t = 0.0
+    CONFIRM_TIMEOUT = 5.0
     TARGET_DT = 1.0 / 30
     floor_offset = 0
 
     try:
         while True:
             t0 = time.time()
+
+            # ── LONG-PRESS EXIT CHECK ──────────────────
+            if state != "confirm_exit" and exit_handler.check_long_press():
+                _flap = False
+                prev_state = state
+                confirm_t = time.time()
+                state = "confirm_exit"
+
+            # ── CONFIRM EXIT ───────────────────────────
+            if state == "confirm_exit":
+                im, draw = new_frame()
+                im.paste(floor_img, (floor_offset - 12, floor_y))
+
+                bx = W // 2 - 80
+                by = H // 2 - 35
+                draw.rectangle([bx + 3, by + 3, bx + 160 + 3, by + 70 + 3],
+                               fill=BIRD_OUTLINE)
+                draw.rectangle([bx, by, bx + 160, by + 70],
+                               fill=FLOOR_CLR, outline=BIRD_OUTLINE, width=2)
+
+                _draw_scaled_text(im, W // 2, by + 8,
+                                  "Exit Home?", font, WHITE, BIRD_OUTLINE, scale=2)
+                _draw_scaled_text(im, W // 2, by + 40,
+                                  "Press = Yes", font, WHITE, BIRD_OUTLINE, scale=2)
+
+                remaining = max(0, CONFIRM_TIMEOUT - (time.time() - confirm_t))
+                _draw_scaled_text(im, W // 2, by + 60,
+                                  f"{remaining:.0f}s to cancel", font,
+                                  WHITE, BIRD_OUTLINE, scale=1)
+                send(im)
+
+                if _flap:
+                    _flap = False
+                    exit_handler.exit_to_launcher()
+                elif time.time() - confirm_t >= CONFIRM_TIMEOUT:
+                    _flap = False
+                    state = prev_state
+                else:
+                    time.sleep(0.05)
+                continue
 
             # ── TITLE ───────────────────────────────────
             if state == "title":
@@ -248,7 +291,6 @@ def main():
                     score = 0
                     frame = 0
                     state = "play"
-                    triple.active = False
                 else:
                     time.sleep(0.04)
                 continue
@@ -298,7 +340,6 @@ def main():
                 _play(SND_DIE)
                 _flap = False
                 state = "dead"
-                triple.active = True
                 continue
 
             # Spawn pipes
@@ -335,7 +376,6 @@ def main():
                         _play(SND_DIE)
                         _flap = False
                         state = "dead"
-                        triple.active = True
                         break
             if state == "dead":
                 continue
