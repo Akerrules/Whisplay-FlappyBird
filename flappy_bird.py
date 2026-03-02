@@ -8,7 +8,6 @@ import sys
 import os
 import time
 import random
-import struct
 from PIL import Image, ImageDraw, ImageFont
 from exit_helper import TriplePressExit
 
@@ -39,47 +38,25 @@ def _play(snd):
     if _HAS_AUDIO and snd is not None:
         snd.play()
 
-for _rel in ("Driver", os.path.join("..", "Driver"), os.path.join("..", "..", "Driver")):
-    _p = os.path.join(_DIR, _rel)
-    if os.path.isdir(_p):
-        sys.path.insert(0, os.path.abspath(_p))
+# Locate whisplay_hw driver — bundled with the launcher
+for _candidate in (
+    os.path.join(_DIR, "whisplay_hw.py"),
+    os.path.join(_DIR, "..", "Whisplay-Launcher", "settings", "whisplay_hw.py"),
+    os.path.join(_DIR, "..", "..", "Whisplay-Launcher", "settings", "whisplay_hw.py"),
+):
+    _c = os.path.normpath(_candidate)
+    if os.path.isfile(_c):
+        sys.path.insert(0, os.path.dirname(_c))
         break
 
 try:
-    from WhisPlay import WhisPlayBoard
+    from whisplay_hw import WhisPlayBoard
 except ImportError:
-    try:
-        from Whisplay import WhisPlayBoard
-    except ImportError:
-        raise SystemExit(
-            "Whisplay driver not found.\n"
-            "  git clone https://github.com/PiSugar/Whisplay.git\n"
-            "  cd Whisplay/example && git clone https://github.com/Akerrules/Whisplay-FlappyBird.git\n"
-            "  cd Whisplay-FlappyBird && sudo python3 flappy_bird.py"
-        ) from None
-
-# ── Fast RGB565 conversion ──────────────────────────────────────────
-# numpy vectorizes the whole 240x280 image in one shot (~2 ms on Pi Zero)
-# vs pure-Python loop (~150-300 ms).  Falls back to struct if unavailable.
-try:
-    import numpy as np
-
-    def image_to_rgb565(im):
-        a = np.asarray(im.convert("RGB"), dtype=np.uint16)
-        packed = ((a[:, :, 0] & 0xF8) << 8) | ((a[:, :, 1] & 0xFC) << 3) | (a[:, :, 2] >> 3)
-        return packed.astype(">u2").tobytes()
-
-except ImportError:
-    print("numpy not found — install it for much better FPS:  sudo apt install python3-numpy")
-
-    def image_to_rgb565(im):
-        raw = im.convert("RGB").tobytes()
-        n = len(raw) // 3
-        vals = [
-            ((raw[i] & 0xF8) << 8) | ((raw[i + 1] & 0xFC) << 3) | (raw[i + 2] >> 3)
-            for i in range(0, len(raw), 3)
-        ]
-        return struct.pack(f">{n}H", *vals)
+    raise SystemExit(
+        "whisplay_hw driver not found.\n"
+        "  Place whisplay_hw.py next to this script, or ensure\n"
+        "  Whisplay-Launcher/settings/whisplay_hw.py is a sibling directory."
+    ) from None
 
 # ── Game constants ──────────────────────────────────────────────────
 GRAVITY    = 0.45
@@ -137,19 +114,14 @@ def _draw_pipes(draw, pipes, floor_y):
 def main():
     global _flap
 
-    board = WhisPlayBoard()
-    board.set_backlight(80)
+    board = WhisPlayBoard(backlight=80)
 
     def _shutdown():
-        if _HAS_AUDIO:
-            pygame.mixer.quit()
-        board.cleanup()
         sys.exit(0)
 
     TriplePressExit(board, on_press=_on_btn, shutdown_fn=_shutdown)
 
-    W = getattr(board, "LCD_WIDTH", 240)
-    H = getattr(board, "LCD_HEIGHT", 280)
+    from whisplay_hw import LCD_W as W, LCD_H as H
     floor_y = H - FLOOR_H
     font = ImageFont.load_default()
 
@@ -161,7 +133,7 @@ def main():
         fd.line([(x, 3), (x + 4, FLOOR_H)], fill=FLOOR_TOP, width=1)
 
     def send(im):
-        board.draw_image(0, 0, W, H, image_to_rgb565(im))
+        board.display_image(im)
 
     def new_frame():
         im = Image.new("RGB", (W, H), SKY)
@@ -295,8 +267,14 @@ def main():
         pass
     finally:
         if _HAS_AUDIO:
-            pygame.mixer.quit()
-        board.cleanup()
+            try:
+                pygame.mixer.quit()
+            except Exception:
+                pass
+        try:
+            board.cleanup()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
